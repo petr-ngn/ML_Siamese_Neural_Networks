@@ -1,19 +1,18 @@
 import os
 import pandas as pd
 import numpy as np
-import time
+from time import time
 import cv2
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 from tensorflow.data import AUTOTUNE
-from tensorflow.keras.models import Model
-from tensorflow.keras.backend import epsilon
-from tensorflow.keras.optimizers import Adam
-from tensorflow.math import square, maximum, reduce_mean, sqrt, reduce_sum
-from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, Conv2D, MaxPooling2D, AveragePooling2D, BatchNormalization, Lambda
-
-
+#from tensorflow.keras.models import Model
+#from tensorflow.keras.backend import epsilon
+#from tensorflow.keras.optimizers import Adam
+#from tensorflow.math import square, maximum, reduce_mean, sqrt, reduce_sum
+from sklearn.metrics import roc_curve, f1_score, accuracy_score, recall_score, precision_score
+import seaborn as sns
 
 #Function for reading the images' names, labels and bounding boxes
 def reading_crop_inputs(identity_file = './data/Anno/identity_CelebA.txt', bbox_file = './data/Anno/list_bbox_celeba.txt'):
@@ -27,18 +26,21 @@ def reading_crop_inputs(identity_file = './data/Anno/identity_CelebA.txt', bbox_
 
 
 
-#Function for cropping, resizing and exporting a single image in .jpg format.
-def face_crop(image_name, bbox_df):
+#Function for cropping all the images
+def face_crop_export(id_df, bbox, crop_all = False):
+
+    #Function for cropping, resizing and exporting a single image in .jpg format.
+    def face_crop(image_name, bbox):
 
         #Loading Image
         image_path = './data/Img/img_celeba/' + image_name
         img = cv2.imread(image_path)
 
         #Setting bounding box coordinates
-        startX = bbox_df[bbox_df['image_id'] == image_name]['x_1'].values[0]
-        startY = bbox_df[bbox_df['image_id'] == image_name]['y_1'].values[0]
-        endX = startX + bbox_df[bbox_df['image_id'] == image_name]['width'].values[0]
-        endY = startY + bbox_df[bbox_df['image_id'] == image_name]['height'].values[0]
+        startX = bbox[bbox['image_id'] == image_name]['x_1'].values[0]
+        startY = bbox[bbox['image_id'] == image_name]['y_1'].values[0]
+        endX = startX + bbox[bbox['image_id'] == image_name]['width'].values[0]
+        endY = startY + bbox[bbox['image_id'] == image_name]['height'].values[0]
     
         #Cropping
         crop_img = img[startY:endY, startX:endX]
@@ -50,10 +52,6 @@ def face_crop(image_name, bbox_df):
         #Exporting the cropped image
         cv2.imwrite(f'./cropped_images/{image_name}', output_img)
 
-
-
-#Function for cropping all the images
-def face_crop_export(id_df, crop_all = False):
 
     #Start time initialization (for execution time measurement)
     start_time = time()
@@ -75,11 +73,10 @@ def face_crop_export(id_df, crop_all = False):
             speed = (ind + 1- k)/(time() - start_time) * 60 #How many images have been cropped per minute on average
             eta = (len(imgs_to_crop) - (ind + 1 - k)) / ((ind + 1 - k)/(time() - start_time)) / 60 #Estimated remaining execution time
         
-            print(f"{no_imgs} images cropped ... {speed:.2f} images/min | ETA: {eta:.2f} minutes", end = '\r')
+            print(f"{no_imgs} images cropped ... {speed:.2f} images/min | ETA: {eta:.2f} minutes                 ", end = '\r')
 
         #Skip if the image has no applicable bounding boxes.    
         except cv2.error as e:
-            print(f"Image {img} has no applicable bounding boxes.")
             k += 1
             continue
 
@@ -96,16 +93,27 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt'):
         imgs_to_drop = list(set(identity['image'].tolist()).difference(os.listdir("./cropped_images/")))
         identity = identity[~identity['image'].isin(imgs_to_drop)]
 
-        #Filtering/subsampling only a part of images due to the computional and capacity limits.
-        labels_annot = pd.DataFrame(identity.image_id.value_counts(ascending = True)).query('image_id > 29').index.tolist()
-        identity_filtered = identity[identity['image_id'].isin(labels_annot)]
+        imgs_names = identity['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
 
+        identity_filtered = identity[identity['image_id'].isin(imgs_names)]
+        
         return identity_filtered
 
 
 
+#Function for reading the attributes.
+def read_attributes_df(identity_filtered ,filename = "./data/Anno/list_attr_celeba.txt"):
+    atts = pd.read_csv(filename, delim_whitespace = True).reset_index().rename(columns = {'index':'image'})
+    atts = atts[atts['image'].isin(os.listdir('./cropped_images/'))].replace(-1, 0)
+
+    atts_final = atts[atts['image'].isin(identity_filtered['image'])]
+
+    return atts_final
+
+
+
 #Function for splitting the images into training set, validation set, and test set.
-def images_split(identity_filtered, validation_size, test_size, export = False):
+def images_split(identity_filtered, validation_size, test_size, seed, export = False):
 
     #Extracting the images' names and their labels.
     imgs = identity_filtered['image']
@@ -114,13 +122,19 @@ def images_split(identity_filtered, validation_size, test_size, export = False):
     #Stratified split - in order to preserve the same labels' distribution across the samples.
     _, test_imgs, __, test_labels = train_test_split(imgs, labels,
                                                test_size = test_size,
-                                               random_state = random_seed,        
+                                               random_state = seed,        
                                                stratify = labels)
 
     train_imgs, valid_imgs, train_labels, valid_labels = train_test_split(_, __,
                                                test_size = validation_size/(1-test_size),
-                                               random_state = random_seed,        
+                                               random_state = seed,        
                                                stratify = __)
+    
+    #Reseting row indices
+    train_imgs, train_labels = train_imgs.reset_index(drop = True), train_labels.reset_index(drop = True)
+    valid_imgs, valid_labels = valid_imgs.reset_index(drop = True), valid_labels.reset_index(drop = True)
+    test_imgs, test_labels = test_imgs.reset_index(drop = True), test_labels.reset_index(drop = True)
+
     #Exporting the samples.
     if export:
         pd.concat((train_imgs, train_labels), axis = 1).to_csv('./csv/train_imgs_list.csv', index = False)
@@ -132,7 +146,7 @@ def images_split(identity_filtered, validation_size, test_size, export = False):
 
 
 #Function for generating balanced pairs of images (50% positive pairs, 50% negative pairs)
-def pairs_generator(labels, image_names, seed, export_name = None):
+def pairs_generator(labels, image_names, atts, seed, target_number, export_name = None):
     #Start time initialization (for execution time measurement)
     start_time = time()
 
@@ -146,23 +160,54 @@ def pairs_generator(labels, image_names, seed, export_name = None):
 
     #Dictionary for storing images' indices for each label.
     dict_idx = {i:np.where(labels == i)[0] for i in unique_classes}
+    
+    male_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 1').index.to_list()
+    female_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 0').index.to_list()
+
+    np.random.shuffle(male_indices)
+    np.random.shuffle(female_indices)
+
+    indices = [i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair] + \
+                list(set(female_indices + male_indices) - 
+                     set([i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair]))
+                       
+    np.random.seed(seed)
+    np.random.shuffle(indices)
 
     #Count initialization
     no_pairs_generated = 0
 
+    i_male = 0
+    i_female = 0
+
     #For each image, find its positive pair and negative pair
-    for idx_a in range(len(image_names)):
+    for _ in range(len(image_names)):
+        
+
+        if no_pairs_generated < target_number/2:
+            current_img_list = male_indices
+            idx_a = current_img_list[i_male]
+
+            i_male += 1
+        else:
+            current_img_list = female_indices
+            idx_a = current_img_list[i_female]
+
+            i_female += 1
+   
 
         #Current anchor image - its label (person) and photo name
         label = labels[idx_a]
         current_image_name = image_names[idx_a]
 
-        #Positive image - random image of the same person
-        np.random.seed(seed)
-        idx_b = np.random.choice(dict_idx[label])
-        
         #Increment for chaning the random seed.
         delta_seed = 1
+  
+        #Positive image - random image of the same person
+        np.random.seed(seed + delta_seed)
+        idx_b = np.random.choice(dict_idx[label])
+        
+
 
         #If the pair is existing in the list, select randomly another image again.
         #If the photos are the same (if the indices are the same), then again randomly select another image.
@@ -177,6 +222,7 @@ def pairs_generator(labels, image_names, seed, export_name = None):
             positive_image_name = image_names[idx_b] #Positive image name
             pair_names = [sorted(pair) for pair in pair_images_names] #List of pairs generated so far
             current_pos_pair = sorted([current_image_name, positive_image_name]) #Current generated positive pair
+            
 
             #If the (1) current generated pair is not included in the list of all generated pairs so far and at the same time the positive pair includes 2 different photos or (2) there is no existing positive pair left - skip.
             if ((current_pos_pair not in pair_names) & (len(set(current_pos_pair)) != 1)) or (len(all_pos_combos) == 0):
@@ -207,9 +253,11 @@ def pairs_generator(labels, image_names, seed, export_name = None):
                 negative_image_name = image_names[negative_index] #Negative image name
                 pair_names = [sorted(pair) for pair in pair_images_names] #List of pairs generated so far
                 current_neg_pair = sorted([current_image_name, negative_image_name]) #Current generated negative pair
+                genders = [atts.loc[atts['image'] == current_image_name,'Male'].values[0],
+                               atts.loc[atts['image'] == negative_image_name,'Male'].values[0]]
                 
                  #If the negative pair is already existing in the list, select randomly another image again.
-                if (current_neg_pair not in pair_names):
+                if (current_neg_pair not in pair_names) and (genders[0] != genders[1]):
                     break
                 
                 #If is the negative pair:
@@ -231,25 +279,27 @@ def pairs_generator(labels, image_names, seed, export_name = None):
             no_pairs_generated += 1
 
         #Print statement
-            runtime = time() #Break point for measuring the run time of generating pairs with respect to the anchor image
-            no_pairs = f'{no_pairs_generated}/{2*(len(image_names))}' #How many pairs have been created so far
-            speed = (no_pairs_generated)/(runtime - start_time) * 60 #How many pairs have been created per minute on average
-            eta = (2*(len(image_names)) - (no_pairs_generated)) / ((no_pairs_generated)/(runtime - start_time)) / 60 #Estimated remaining execution time
-
-            print(f'{no_pairs} pairs created ... {speed:.2f} pairs/min | ETA: {eta:.2f} minutes   ', end = '\r')
-
+            no_pairs = f'{no_pairs_generated}/{target_number}' #How many pairs have been created so far
+            print(f'{no_pairs} pairs created', end = '\r')
+            
+            if no_pairs_generated >= target_number:
+                break
 
     #Data frame storing all negative and positive pairs (with the image names) and their pair label (1 = positive | 0 = negative).
     final_df = pd.concat((pd.DataFrame((pair_images_names), columns = ['img_1', 'img_2']),
                             pd.DataFrame(pair_labels, columns = ['label'])),
                             axis = 1)
 
+    final_df = final_df.sample(frac = 1,
+                                random_state = seed).sample(frac = 1,
+                                random_state = seed)
+
     #Exporting the generated pairs and their labels.
     if export_name != None:
         final_df.to_csv(f'./csv/{export_name}_pairs.csv', index  = False)
     
     #Print statement
-    print('                                                                                                ', end = '\r') #Removing the previous statements
+    print('                                                                                                 ', end = '\r') #Removing the previous statements
 
     #Final statement
     print(f'{no_pairs_generated} unique balanced pairs generated', '\n')
@@ -259,12 +309,44 @@ def pairs_generator(labels, image_names, seed, export_name = None):
 
 
 
+#Function for checking descriptive information about the generated pairs in given sample
+def pairs_check(pairs_df, atts):
+    
+    #Accessing unique labels [0, 1] and their frequencies
+    labels = pairs_df['label'].replace(1, 'Positive').replace(0, 'Negative').value_counts().index
+    freqs = pairs_df['label'].value_counts().values
+
+    #Print the label distribution
+    print(f"Label distribution ... {labels[0]}: {freqs[0]} ({freqs[0]/sum(freqs)*100:.0f}%) | {labels[1]}: {freqs[1]} ({freqs[1]/sum(freqs)*100:.0f}%)")
+
+    #Acessing the unique pairs from given sample
+    unique_pairs = set([str(sorted([i,j])) for i,j in zip(pairs_df['img_1'], pairs_df['img_2'])])
+
+    #Check whether the number of unique pairs match the number of generated pairs in withn sample
+    if len(unique_pairs):
+        print(f'Number of unique pairs ... {len(unique_pairs)}')
+    else:
+        print(f"Number of unique pars doesn't match the number of pairs in given sample ({len(unique_pairs)} vs {pairs_df.shape[0]})")
+
+    #Print whether the are any pairs which contains a single picture only
+    print(f"Number of pairs containing the same image ... {(pairs_df['img_1'] == pairs_df['img_2']).sum()}")
+
+    num_unique_imgs = len(list(set(pairs_df['img_1'].tolist() + pairs_df['img_2'].tolist())))
+    print(f'Number of images ... {num_unique_imgs}')
+
+    gender = pairs_df.merge(atts[['image','Male']].replace(1, 'Male').replace(0, 'Female'), left_on ='img_1', right_on = 'image')['Male'].value_counts().index
+    gender_freqs = pairs_df.merge(atts[['image','Male']].replace(1, 'Male').replace(0, 'Female'), left_on ='img_1', right_on = 'image')['Male'].value_counts().values
+
+    print(f"Gender distribution ... {gender[0]}: {gender_freqs[0]} ({gender_freqs[0]/sum(freqs)*100:.0f}%) | {gender_freqs[1]}: {gender_freqs[1]} ({gender_freqs[1]/sum(gender_freqs)*100:.0f}%)")
+
+
+
 #Function for plotting an image and its positive and negative pair
 def plot_pairs(pairs_df, base_img = None, resize = True):
         
         if base_img == None:
                 base_img = np.random.choice(pairs_df['img_1'])
-                
+
         #Filter pairs which include the baseline image
         filtered_df = pairs_df[pairs_df['img_1'] == base_img]
 
@@ -301,32 +383,34 @@ def plot_pairs(pairs_df, base_img = None, resize = True):
 
 
 
-#Function for reading the generated balanced pairs and their labels saved in .csv format and outputing them as two separate numpy arrays
-def read_pairs(sample_name):
+#Function for reading pairs and load either as data frame or as arrays.
+def read_pairs(sample_name, separate = True):
     
     final_df = pd.read_csv(f'./csv/{sample_name}_pairs.csv')
 
-    #Attaching a path folder name to each image.
-    for col in ['img_1', 'img_2']:
-        final_df[col] =  [f'./cropped_images/{i}'for i in final_df[col]]
+    if separate:
+        for col in ['img_1', 'img_2']:
+            final_df[col] =  [f'./cropped_images/{i}'for i in final_df[col]]
 
-    #Extracting separately the pairs of images' names and the labels
-    imgs = final_df[['img_1', 'img_2']]
-    labels = final_df[['label']]
+        imgs = final_df[['img_1', 'img_2']]
+        labels = final_df[['label']]
 
-    return np.array(imgs), np.array(labels)
+        return np.array(imgs), np.array(labels)
+        
+    else:
+        return final_df
 
 
 
-#Function for processing the both anchor image (left image) and its comaprison image (right image)
+#Function for processing pairs of images
 def tf_img_pipeline(anchor, comparison):
     
-    #Function for processing the the image (reading, decoding, resizing and converting to tensors)
+    #Function for processing an image (reading, decoding, resizing and tensor conversion)
     def tf_img_processing(img_path):
         img = tf.io.read_file(img_path)
         img = tf.image.decode_jpeg(img, channels = 3)
         img = tf.image.resize(img, [224,224], method = 'bilinear')
-        img = tf.image.convert_image_dtype(img, tf.float32)
+        img = tf.image.convert_image_dtype(img, tf.float32) /  tf.constant(255, dtype = tf.float32)
 
         return img
 
@@ -334,119 +418,89 @@ def tf_img_pipeline(anchor, comparison):
 
 
 
-#Function for converting the labels from numpy arrays to tensors
+#Function for processing labels
 def tf_label_pipeline(label):
     return tf.cast(label, tf.float32)
 
 
 
-#Function for creating a pipeline for both processing images and labels and generating a TensorFlow dataset as an input for modelling
+#Function for tensorflow dataset creation - input for modelling
 def tf_data_processing_pipeline(images, labels):
 
     images_tf = tf.data.Dataset.from_tensor_slices((images[:, 0] , images[:, 1])).map(tf_img_pipeline)
     labels_tf = tf.data.Dataset.from_tensor_slices(labels).map(tf_label_pipeline)
 
     dataset = tf.data.Dataset.zip((images_tf,
-                                    labels_tf)).batch(64,
+                                    labels_tf)).batch(10,
                                                       num_parallel_calls = AUTOTUNE).cache().prefetch(buffer_size = AUTOTUNE)
     return dataset
 
 
 
-#Function for calculation an Euclidean distance between the two feature vectors
-def euclidean_distance(vectors):
+#Function for plotting the validation and training loss
+def plot_val_train_loss(history_model, export = True):
+  
+  plt.figure(figsize = (12, 10))
 
-    x, y = vectors
-    sum_square = reduce_sum(square(x - y), axis = 1, keepdims = True)
+  plt.plot(history_model.history['loss'])
+  plt.plot(history_model.history['val_loss'])
 
-    return sqrt(maximum(sum_square, epsilon()))
+  plt.title('Model Loss')
+  plt.ylabel('Loss')
+  plt.xlabel('Epochs')
+  plt.legend(['train', 'validation'])
 
+  plt.grid()
+  plt.tight_layout()
 
+  if export:
+    plt.savefig('validation_train_loss.png')
 
-#Function for a calculation of a contrastive loss
-def contrastive_loss(margin = 1):
-
-    def contrastive__loss(y_true, y_pred):
-
-        square_pred = tf.math.square(y_pred)
-        margin_square = tf.math.square(tf.math.maximum(margin - (y_pred), 0))
-        return tf.math.reduce_mean(
-            (1 - y_true) * square_pred + (y_true) * margin_square
-        )
-
-    return contrastive__loss
+  plt.show()
 
 
 
-#Function for building the Siamese Networks model within a hyperparameter optimization.
-def model_building(hp):
 
-    #Input layer
-    inputs = Input(shape = (224, 224, 3))
-    x = inputs
+#Function for calculating an optimal threshold for classification by minimizing the difference between TPR and FNR.
+def opt_threshold(model, tf_dataset, np_labels, plot = True):
+  predictions_prob = model.predict(tf_dataset).flatten().tolist()
+  df_results = pd.DataFrame({'labels': ['Positive' if i[0] == 1 else 'Negative'
+                                        for i in np_labels],
+                             'prob': predictions_prob})
+  threshold = 1/2 * df_results.groupby('labels')['prob'].mean().sum()
+  if plot:
+    plt.figure(figsize = (15, 10))
+    sns.boxplot(data = df_results, y = 'prob', x = 'labels')
+    plt.axhline(y = threshold, color = 'r', linestyle = '--',
+                linewidth = 1, label = 'Threshold')
+    plt.legend()
+    plt.title('Distribution of predicted probabilites per label', size = 13)
+    plt.tight_layout()
+    plt.show()
+  return threshold
 
-    #Tuning a number of convolutional blocks
-    for i in range(hp.Int('conv_blocks', min_value = 2, max_value = 5, default = 3)):
-    
-        #Tuning the number of convolution's output filters
-        filters = hp.Int('filters_' + str(i), min_value = 32,
-                        max_value = 1000, step = 32) 
 
-        #Within each block, perform 2 convolutions and batch normalization
-        for _ in range(2):
 
-        #Tuning the number of convolution's output filters
-            x = Conv2D(filters, kernel_size=(3, 3), padding = 'same',
-                 activation = 'relu')(x)
-            x = BatchNormalization()(x)
+#Function for making predictions based on provided threshold.
+def make_predictions(model, tf_dataset, threshold):
+  predictions_prob = model.predict(tf_dataset).flatten().tolist()
+  final_predictions = pd.Series(predictions_prob).apply(lambda x: 1 if x > threshold else 0)
 
-        #Tuning the pooling type in the convolutional block
-        if hp.Choice('pooling_' + str(i), ['avg', 'max']) == 'max':
-            x = MaxPooling2D()(x)
-        else:
-            x = AveragePooling2D()(x)
-    
-    #Tuning the dropout rate in the dropout layer in the convolutional block
-        x = Dropout((hp.Float('dropout', 0, 0.5, step = 0.05, default = 0.5)), seed = 123)(x)
+  return final_predictions
 
-    #Flatten the output
-    x = Flatten()(x)
 
-    #Tuning the number of units in the dense layer
-    x = Dense(hp.Int('Dense units' ,min_value = 50,
-                   max_value = 100, step = 10, default = 50),
-                  activation='relu')(x)
 
-    #Tuning the dropout rate in the dropout layer - the final feature vector layer
-    feature_layer = Dropout((hp.Float('dropout', 0, 0.5, step = 0.05, default = 0.5)), seed = 123)(x)
+#Function for making evaluation based on provided metric, true labels and predicted labels.
+def make_evaluation(true_labels, predictions, metric):
 
-    #Mapping a embedding model
-    embedding_network = Model(inputs, feature_layer)
-    
-    #Setting an input layer for the image pairs
-    input_1 = Input((224, 224, 3))
-    input_2 = Input((224, 224, 3))
-    tower_1 = embedding_network(input_1)
-    tower_2 = embedding_network(input_2)
+  metrics_dict = {'accuracy':accuracy_score,
+                  'recall':recall_score,
+                  'precision':precision_score,
+                  'F1':f1_score}
 
-    #Layers for calculation of the Euclidean distance between the two feature vectors, with further normalization
-    merge_layer = Lambda(euclidean_distance)([tower_1, tower_2])
-    normal_layer = BatchNormalization()(merge_layer)
+  score = metrics_dict[metric]([i[0] for i in true_labels], predictions)
 
-    #Final output layer (classification whether the images are of the same label/person)
-    output_layer = Dense(1, activation="sigmoid")(normal_layer)
+  return score
 
-    #Final model mapping
-    model = Model(inputs=[input_1, input_2], outputs = output_layer)
 
-    #Model compilation:
-        #Tuning the learning rate of the stochastic gradient method in the Adam optimizer.
-        #Minimizing a binary cross entropy loss function and maximizing an accuracy.
-        #We compute the binary cross entropy for each label separately and then sum them up for the complete loss.
-        
-    model.compile(optimizer = Adam(hp.Float('learning_rate', min_value = 1e-4,
-                                                            max_value = 1e-2,
-                                                            sampling = 'log')), 
-                    loss = contrastive_loss(margin = 1))
 
-    return model
