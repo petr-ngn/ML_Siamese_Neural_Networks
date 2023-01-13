@@ -83,7 +83,7 @@ def face_crop_export(id_df, bbox, crop_all = False):
 
 
 #Function for reading and subsampling the images.
-def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt'):
+def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_file =  "./data/Anno/list_attr_celeba.txt"):
 
         #Reading the images' names and labels.
         identity = pd.read_csv(identity_file, sep = " ", header = None,
@@ -93,22 +93,43 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt'):
         imgs_to_drop = list(set(identity['image'].tolist()).difference(os.listdir("./cropped_images/")))
         identity = identity[~identity['image'].isin(imgs_to_drop)]
 
-        imgs_names = identity['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
+        #Selecting only images, whose classes occur at least 5 times.
+        #imgs_names = identity['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
+        #identity_filtered = identity[identity['image_id'].isin(imgs_names)]
 
-        identity_filtered = identity[identity['image_id'].isin(imgs_names)]
+        #Reading attributes file
+        atts = pd.read_csv(atts_file, delim_whitespace = True).reset_index().rename(columns = {'index':'image'})
+
+        #Filtering images based on subsampling on identity file and replace -1 with 0
+        atts = atts[atts['image'].isin(identity['image'])].replace(-1, 0)
+
+        #Exclude images which fullill at least on the following images (in order to exclude noisy images)
+        exclude_imgs = (atts['w5_o_Clock_Shadow'] == 1) | (atts['Wearing_Hat'] == 1) | (atts['Eyeglasses'] == 1) | (atts['Smiling'] == 1) | (atts['Narrow_Eyes'] == 1) | (atts['Pale_Skin'] == 1)
         
-        return identity_filtered
+        #final outputs:
+        atts_filtered = atts[~exclude_imgs]
+        identity_filtered = identity[~exclude_imgs]
+
+        young_old_ids = identity_filtered.merge(atts_filtered[['image','Young']], on = 'image').groupby('image_id')['Young'].mean().reset_index().rename(columns = {'Young':'Young_photo'})
+        young_old_ids['Young_photo'] = [0 if i <= 0.5 else 1 for i in young_old_ids['Young_photo']]
+        young_old_filter = identity_filtered.merge(young_old_ids[['image_id','Young_photo']], on ='image_id').merge(atts[['image','Young']], on ='image').query('Young_photo == Young')['image'].tolist()
+
+        atts_filtered = atts_filtered[atts_filtered['image'].isin(young_old_filter)]
+        identity_filtered = identity[identity['image'].isin(young_old_filter)]
+
+        gray_hair_ids = identity_filtered.merge(atts_filtered[['image','Gray_Hair']], on = 'image').groupby('image_id')['Gray_Hair'].mean().reset_index().rename(columns = {'Gray_Hair':'Gray_Hair_photo'})
+        gray_hair_ids['Gray_Hair_photo'] = [0 if i <= 0.5 else 1 for i in gray_hair_ids['Gray_Hair_photo']]
+        gray_hair_filter = identity_filtered.merge(gray_hair_ids[['image_id','Gray_Hair_photo']], on ='image_id').merge(atts[['image','Gray_Hair']], on ='image').query('Gray_Hair_photo == Gray_Hair')['image'].tolist()
+
+        atts_filtered = atts_filtered[atts_filtered['image'].isin(gray_hair_filter)]
+        identity_filtered = identity[identity['image'].isin(gray_hair_filter)]
 
 
+        final_imgs = identity_filtered['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
+        final_identity = identity_filtered[identity_filtered['image_id'].isin(final_imgs)]
+        final_atts = atts_filtered[atts_filtered['image'].isin(final_identity['image'])]
 
-#Function for reading the attributes.
-def read_attributes_df(identity_filtered ,filename = "./data/Anno/list_attr_celeba.txt"):
-    atts = pd.read_csv(filename, delim_whitespace = True).reset_index().rename(columns = {'index':'image'})
-    atts = atts[atts['image'].isin(os.listdir('./cropped_images/'))].replace(-1, 0)
-
-    atts_final = atts[atts['image'].isin(identity_filtered['image'])]
-
-    return atts_final
+        return final_identity, final_atts
 
 
 
