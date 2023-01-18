@@ -83,19 +83,22 @@ def face_crop_export(id_df, bbox, crop_all = False):
 
 
 #Function for reading and subsampling the images.
-def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_file =  "./data/Anno/list_attr_celeba.txt"):
+def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_file =  "./data/Anno/list_attr_celeba.txt", bad_imgs_file = 'final_bad_imgs.csv'):
 
         #Reading the images' names and labels.
         identity = pd.read_csv(identity_file, sep = " ", header = None,
                             names = ['image', 'image_id'])
-        
+
+        bad_imgs = pd.read_csv(bad_imgs_file)
+
+        print(f'Original number of images: {identity.shape[0]}')
+
         #Dropping the images which could not be cropped.
         imgs_to_drop = list(set(identity['image'].tolist()).difference(os.listdir("./cropped_images/")))
         identity = identity[~identity['image'].isin(imgs_to_drop)]
+        identity = identity[~identity['image'].isin(bad_imgs['image'].tolist())]
 
-        #Selecting only images, whose classes occur at least 5 times.
-        #imgs_names = identity['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
-        #identity_filtered = identity[identity['image_id'].isin(imgs_names)]
+        print(f"Number of images after the 1st exclusion: {identity.shape[0]}")
 
         #Reading attributes file
         atts = pd.read_csv(atts_file, delim_whitespace = True).reset_index().rename(columns = {'index':'image'})
@@ -104,11 +107,13 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_f
         atts = atts[atts['image'].isin(identity['image'])].replace(-1, 0)
 
         #Exclude images which fullill at least on the following images (in order to exclude noisy images)
-        exclude_imgs = (atts['w5_o_Clock_Shadow'] == 1) | (atts['Wearing_Hat'] == 1) | (atts['Eyeglasses'] == 1) | (atts['Smiling'] == 1) | (atts['Narrow_Eyes'] == 1) | (atts['Pale_Skin'] == 1)
+        exclude_imgs = (atts['w5_o_Clock_Shadow'] == 1) | (atts['Wearing_Hat'] == 1) | (atts['Eyeglasses'] == 1) | (atts['Smiling'] == 1) | (atts['Narrow_Eyes'] == 1) | (atts['Pale_Skin'] == 1) | (atts['Blurry'] == 1) | (atts['Mouth_Slightly_Open'] == 1)
         
         #final outputs:
         atts_filtered = atts[~exclude_imgs]
         identity_filtered = identity[~exclude_imgs]
+
+        print(f"Number of images after the 2nd exclusion: {identity_filtered.shape[0]}")
 
         young_old_ids = identity_filtered.merge(atts_filtered[['image','Young']], on = 'image').groupby('image_id')['Young'].mean().reset_index().rename(columns = {'Young':'Young_photo'})
         young_old_ids['Young_photo'] = [0 if i <= 0.5 else 1 for i in young_old_ids['Young_photo']]
@@ -117,6 +122,8 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_f
         atts_filtered = atts_filtered[atts_filtered['image'].isin(young_old_filter)]
         identity_filtered = identity[identity['image'].isin(young_old_filter)]
 
+        print(f"Number of images after the 3rd exclusion: {identity_filtered.shape[0]}")
+
         gray_hair_ids = identity_filtered.merge(atts_filtered[['image','Gray_Hair']], on = 'image').groupby('image_id')['Gray_Hair'].mean().reset_index().rename(columns = {'Gray_Hair':'Gray_Hair_photo'})
         gray_hair_ids['Gray_Hair_photo'] = [0 if i <= 0.5 else 1 for i in gray_hair_ids['Gray_Hair_photo']]
         gray_hair_filter = identity_filtered.merge(gray_hair_ids[['image_id','Gray_Hair_photo']], on ='image_id').merge(atts[['image','Gray_Hair']], on ='image').query('Gray_Hair_photo == Gray_Hair')['image'].tolist()
@@ -124,10 +131,14 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_f
         atts_filtered = atts_filtered[atts_filtered['image'].isin(gray_hair_filter)]
         identity_filtered = identity[identity['image'].isin(gray_hair_filter)]
 
+        print(f"Number of images after the 4th exclusion: {identity_filtered.shape[0]}")
+
 
         final_imgs = identity_filtered['image_id'].value_counts().reset_index().rename(columns = {'image_id':'count','index':'image_id'}).query('count >= 5')['image_id']
         final_identity = identity_filtered[identity_filtered['image_id'].isin(final_imgs)]
         final_atts = atts_filtered[atts_filtered['image'].isin(final_identity['image'])]
+
+        print(f"Final number of images after all the exclusions: {final_identity.shape[0]}")
 
         return final_identity, final_atts
 
@@ -167,7 +178,7 @@ def images_split(identity_filtered, validation_size, test_size, seed, export = F
 
 
 #Function for generating balanced pairs of images (50% positive pairs, 50% negative pairs)
-def pairs_generator(labels, image_names, atts, seed, target_number, export_name = None):
+def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_list, export_name = None):
     #Start time initialization (for execution time measurement)
     start_time = time()
 
@@ -176,59 +187,76 @@ def pairs_generator(labels, image_names, atts, seed, target_number, export_name 
     #List for storing the pair image names.
     pair_images_names = []
 
+    if len(exclude_imgs_list) !=0:
+        id_df = identity_file[~identity_file['image'].isin(exclude_imgs_list)]
+        atts = atts_df[~atts_df['image'].isin(exclude_imgs_list)]
+        labels = id_df['image_id'].reset_index(drop = True)
+        image_names = id_df['image'].reset_index(drop = True)
+    else:
+        atts = atts_df.copy()
+        labels = identity_file['image_id'].reset_index(drop = True)
+        image_names = atts_df['image'].reset_index(drop = True)
+
+
     #Array with all the labels
     unique_classes = np.unique(labels)
 
     #Dictionary for storing images' indices for each label.
     dict_idx = {i:np.where(labels == i)[0] for i in unique_classes}
     
+    #Separating indices of male and female images.
     male_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 1').index.to_list()
     female_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 0').index.to_list()
 
+    np.random.seed(seed)
+    #Random shuffle of those indices
     np.random.shuffle(male_indices)
     np.random.shuffle(female_indices)
-
+    """
+    #make a list of indices with following order: male, 
     indices = [i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair] + \
                 list(set(female_indices + male_indices) - 
                      set([i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair]))
-                       
-    np.random.seed(seed)
     np.random.shuffle(indices)
-
-    #Count initialization
+    """
+                  
+    #Count of pairs initialization
     no_pairs_generated = 0
 
+    #count initialization of generated pairs (with male image as an anchor)
     i_male = 0
+    #count initialization of generated pairs (with female image as an anchor)
     i_female = 0
+
+    #Increment for changing the random seed.
+    delta_seed = 1
 
     #For each image, find its positive pair and negative pair
     for _ in range(len(image_names)):
         
-
+        #The first half of the pairs will have male images as anchor
         if no_pairs_generated < target_number/2:
             current_img_list = male_indices
             idx_a = current_img_list[i_male]
 
             i_male += 1
+    
+        #The second half will have female images as anchor.
         else:
             current_img_list = female_indices
             idx_a = current_img_list[i_female]
 
             i_female += 1
-   
 
         #Current anchor image - its label (person) and photo name
         label = labels[idx_a]
         current_image_name = image_names[idx_a]
 
-        #Increment for chaning the random seed.
-        delta_seed = 1
   
         #Positive image - random image of the same person
         np.random.seed(seed + delta_seed)
         idx_b = np.random.choice(dict_idx[label])
         
-
 
         #If the pair is existing in the list, select randomly another image again.
         #If the photos are the same (if the indices are the same), then again randomly select another image.
@@ -243,13 +271,31 @@ def pairs_generator(labels, image_names, atts, seed, target_number, export_name 
             positive_image_name = image_names[idx_b] #Positive image name
             pair_names = [sorted(pair) for pair in pair_images_names] #List of pairs generated so far
             current_pos_pair = sorted([current_image_name, positive_image_name]) #Current generated positive pair
+
+            #Check whether the the person has the same color hair on the images - they should
+            color_hair_indicator = (atts.loc[atts['image'] == current_image_name,['Blond_Hair', 'Black_Hair','Brown_Hair']].reset_index(drop = True) !=\
+                                    atts.loc[atts['image'] == positive_image_name,['Blond_Hair', 'Black_Hair','Brown_Hair']].reset_index(drop = True)).sum().sum()
+
+            #Check whether the the person has make up on both images or not
+            makeup_indicator = (atts.loc[atts['image'] == current_image_name, ['Heavy_Makeup']].reset_index(drop = True) ==\
+                                atts.loc[atts['image'] == positive_image_name, ['Heavy_Makeup']].reset_index(drop = True)).sum().sum()
+
+            #Check whether the the person has facial hair on both images or not
+            facial_hair_indicator = (atts.loc[atts['image'] == current_image_name, ['No_Beard', 'Mustache', 'Goatee']].reset_index(drop = True) ==\
+                                    atts.loc[atts['image'] == positive_image_name, ['No_Beard', 'Mustache', 'Goatee']].reset_index(drop = True)).sum().sum()
             
 
-            #If the (1) current generated pair is not included in the list of all generated pairs so far and at the same time the positive pair includes 2 different photos or (2) there is no existing positive pair left - skip.
-            if ((current_pos_pair not in pair_names) & (len(set(current_pos_pair)) != 1)) or (len(all_pos_combos) == 0):
+            #If the
+            # (1) current generated pair is not included in the list of all generated pairs so far and at the same time the positive pair includes 2 different photos, and
+            # (2) has the same hair color, and
+            # (3) do/doesn't have make up on both images, and
+            # (4) do/doesn't have facial hair on both images, or
+            # (2) there is no existing positive pair left
+            # Then skip.
+            if ((current_pos_pair not in pair_names) & (len(set(current_pos_pair)) != 1)) & (color_hair_indicator == 0) & (makeup_indicator > 0) & (facial_hair_indicator > 1) or (len(all_pos_combos) == 0):
                 break
             
-            #If is the positive pair is duplicated or has 2 same images or there are still some combinations left:
+            #If is the positive pair is duplicated or has 2 same images or there any other conditions mentioned above which were not met:
             else:
                 #Change the random seed to sample different image name
                 np.random.seed(seed + delta_seed) #Change the random seed to sample different image name
@@ -266,6 +312,7 @@ def pairs_generator(labels, image_names, atts, seed, target_number, export_name 
         if (len(all_pos_combos) != 0):
             
             #Randomly sampling a different label (person) and its image name's index.
+            np.random.seed(seed + delta_seed)
             negative_index = np.random.choice(dict_idx[np.random.choice([i for i in dict_idx.keys()
                                                                         if i != label])])
 
@@ -276,9 +323,13 @@ def pairs_generator(labels, image_names, atts, seed, target_number, export_name 
                 current_neg_pair = sorted([current_image_name, negative_image_name]) #Current generated negative pair
                 genders = [atts.loc[atts['image'] == current_image_name,'Male'].values[0],
                                atts.loc[atts['image'] == negative_image_name,'Male'].values[0]]
+
+                #Check whether the the person has the same color hair on the images - they should not
+                color_hair_indicator = (atts.loc[atts['image'] == current_image_name,['Blond_Hair', 'Black_Hair','Brown_Hair']].reset_index(drop = True) !=\
+                                        atts.loc[atts['image'] == negative_image_name,['Blond_Hair', 'Black_Hair','Brown_Hair']].reset_index(drop = True)).sum().sum()
                 
                  #If the negative pair is already existing in the list, select randomly another image again.
-                if (current_neg_pair not in pair_names) and (genders[0] != genders[1]):
+                if (current_neg_pair not in pair_names) and (genders[0] != genders[1]) and (color_hair_indicator > 0):
                     break
                 
                 #If is the negative pair:
@@ -358,7 +409,7 @@ def pairs_check(pairs_df, atts):
     gender = pairs_df.merge(atts[['image','Male']].replace(1, 'Male').replace(0, 'Female'), left_on ='img_1', right_on = 'image')['Male'].value_counts().index
     gender_freqs = pairs_df.merge(atts[['image','Male']].replace(1, 'Male').replace(0, 'Female'), left_on ='img_1', right_on = 'image')['Male'].value_counts().values
 
-    print(f"Gender distribution ... {gender[0]}: {gender_freqs[0]} ({gender_freqs[0]/sum(freqs)*100:.0f}%) | {gender_freqs[1]}: {gender_freqs[1]} ({gender_freqs[1]/sum(gender_freqs)*100:.0f}%)")
+    print(f"Gender distribution ... {gender[0]}: {gender_freqs[0]} ({gender_freqs[0]/sum(freqs)*100:.0f}%) | {gender[1]}: {gender_freqs[1]} ({gender_freqs[1]/sum(gender_freqs)*100:.0f}%)")
 
 
 
