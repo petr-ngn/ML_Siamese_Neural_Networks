@@ -1,4 +1,6 @@
-# ML_Siamese_Neural_Networks
+# Siamese Convolutional Neural Networks for 
+
+ Agile Project of Machine learning Applications (4IZ481)
 To-Do list:
 1) Cropping and resizing images [DONE]
 2) Subsampling and splitting images [DONE]
