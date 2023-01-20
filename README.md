@@ -1,11 +1,8 @@
-# Siamese Convolutional Neural Networks for 
+# Siamese Convolutional Neural Networks
 
- Agile Project of Machine learning Applications (4IZ481)
-To-Do list:
-1) Cropping and resizing images [DONE]
-2) Subsampling and splitting images [DONE]
-3) Creating balanced pairs of images [DONE]
-4) TensorFlow API data processing pipeline [DONE]
-5) Siamese Neural Networks Building and Optimizing [DONE]
-6) Evaluation [DONE]
-7) Live Demo [TBD]
+Within the course __*Agile Project of Machine learning Applications (4IZ481)*__ at Faculty of Informatics and Statistics, Prague University of Economics and Business, our task was to develop a Machine Lerning model for face image recognition and detection, using Tensorflow and Keras.
+
+Particularly, I have developed a Siamese Convolutional Neural Networks with Contrastive Loss, which was further tuned with Bayesian Optimization while minimizing a loss function on validation set, and was built on the generated balanced pairs of images.
+
+This repository contains following notebooks:
+1)
