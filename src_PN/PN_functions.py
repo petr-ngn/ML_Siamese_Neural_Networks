@@ -7,11 +7,12 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 from tensorflow.data import AUTOTUNE
-#from tensorflow.keras.models import Model
-#from tensorflow.keras.backend import epsilon
-#from tensorflow.keras.optimizers import Adam
-#from tensorflow.math import square, maximum, reduce_mean, sqrt, reduce_sum
-from sklearn.metrics import roc_curve, f1_score, accuracy_score, recall_score, precision_score
+from tensorflow.keras.models import Model
+from tensorflow.keras.backend import epsilon
+from tensorflow.keras.optimizers import RMSprop
+from tensorflow.math import square, maximum, reduce_mean, sqrt, reduce_sum
+from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, Conv2D, MaxPooling2D, GlobalAveragePooling2D, AveragePooling2D, BatchNormalization, Lambda
+from keras.callbacks import EarlyStopping, TensorBoard
 import seaborn as sns
 
 #Function for reading the images' names, labels and bounding boxes
@@ -144,39 +145,6 @@ def images_subsampling(identity_file = './data/Anno/identity_CelebA.txt', atts_f
 
 
 
-#Function for splitting the images into training set, validation set, and test set.
-def images_split(identity_filtered, validation_size, test_size, seed, export = False):
-
-    #Extracting the images' names and their labels.
-    imgs = identity_filtered['image']
-    labels = identity_filtered['image_id']
-
-    #Stratified split - in order to preserve the same labels' distribution across the samples.
-    _, test_imgs, __, test_labels = train_test_split(imgs, labels,
-                                               test_size = test_size,
-                                               random_state = seed,        
-                                               stratify = labels)
-
-    train_imgs, valid_imgs, train_labels, valid_labels = train_test_split(_, __,
-                                               test_size = validation_size/(1-test_size),
-                                               random_state = seed,        
-                                               stratify = __)
-    
-    #Reseting row indices
-    train_imgs, train_labels = train_imgs.reset_index(drop = True), train_labels.reset_index(drop = True)
-    valid_imgs, valid_labels = valid_imgs.reset_index(drop = True), valid_labels.reset_index(drop = True)
-    test_imgs, test_labels = test_imgs.reset_index(drop = True), test_labels.reset_index(drop = True)
-
-    #Exporting the samples.
-    if export:
-        pd.concat((train_imgs, train_labels), axis = 1).to_csv('./csv/train_imgs_list.csv', index = False)
-        pd.concat((valid_imgs, valid_labels), axis = 1).to_csv('./csv/valid_imgs_list.csv', index = False)
-        pd.concat((test_imgs, test_labels), axis = 1).to_csv('./csv/test_imgs_list.csv', index = False)
-
-    return train_imgs, train_labels, valid_imgs, valid_labels, test_imgs, test_labels
-
-
-
 #Function for generating balanced pairs of images (50% positive pairs, 50% negative pairs)
 def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_list, export_name = None):
     #Start time initialization (for execution time measurement)
@@ -197,7 +165,6 @@ def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_li
         labels = identity_file['image_id'].reset_index(drop = True)
         image_names = atts_df['image'].reset_index(drop = True)
 
-
     #Array with all the labels
     unique_classes = np.unique(labels)
 
@@ -208,17 +175,10 @@ def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_li
     male_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 1').index.to_list()
     female_indices = pd.DataFrame(image_names).merge(atts[['image', 'Male']], on ='image').query('Male == 0').index.to_list()
 
-    np.random.seed(seed)
     #Random shuffle of those indices
+    np.random.seed(seed)
     np.random.shuffle(male_indices)
     np.random.shuffle(female_indices)
-    """
-    #make a list of indices with following order: male, 
-    indices = [i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair] + \
-                list(set(female_indices + male_indices) - 
-                     set([i for pair in [pair for pair in zip(male_indices, female_indices)] for i in pair]))
-    np.random.shuffle(indices)
-    """
                   
     #Count of pairs initialization
     no_pairs_generated = 0
@@ -252,12 +212,10 @@ def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_li
         label = labels[idx_a]
         current_image_name = image_names[idx_a]
 
-  
         #Positive image - random image of the same person
         np.random.seed(seed + delta_seed)
         idx_b = np.random.choice(dict_idx[label])
         
-
         #If the pair is existing in the list, select randomly another image again.
         #If the photos are the same (if the indices are the same), then again randomly select another image.
 
@@ -284,7 +242,6 @@ def pairs_generator(identity_file, atts_df, seed, target_number, exclude_imgs_li
             facial_hair_indicator = (atts.loc[atts['image'] == current_image_name, ['No_Beard', 'Mustache', 'Goatee']].reset_index(drop = True) ==\
                                     atts.loc[atts['image'] == positive_image_name, ['No_Beard', 'Mustache', 'Goatee']].reset_index(drop = True)).sum().sum()
             
-
             #If the
             # (1) current generated pair is not included in the list of all generated pairs so far and at the same time the positive pair includes 2 different photos, and
             # (2) has the same hair color, and
@@ -436,19 +393,24 @@ def plot_pairs(pairs_df, base_img = None, resize = True):
         ax = plt.subplot(131)
         ax.set_title(f"Anchor image - {base_img}")
         ax.imshow(cv2.cvtColor(cv2.imread(f'./{folder_path}/{base_img}'),
-        cv2.COLOR_BGR2RGB))
+                  cv2.COLOR_BGR2RGB))
+        ax.set_axis_off()
+        
+        
 
         #Plot the positive image
         ax = plt.subplot(132)
         ax.set_title(f"Positive image - {positive_img}")
         ax.imshow(cv2.cvtColor(cv2.imread(f'./{folder_path}/{positive_img}'),
                   cv2.COLOR_BGR2RGB))
+        ax.set_axis_off()
 
         #Plot the negative image
         ax = plt.subplot(133)
         ax.set_title(f"Negative image - {negative_img}")
         ax.imshow(cv2.cvtColor(cv2.imread(f'./{folder_path}/{negative_img}'),
                   cv2.COLOR_BGR2RGB))
+        ax.set_axis_off()
 
         plt.tight_layout()
         plt.show()
@@ -503,10 +465,139 @@ def tf_data_processing_pipeline(images, labels):
     labels_tf = tf.data.Dataset.from_tensor_slices(labels).map(tf_label_pipeline)
 
     dataset = tf.data.Dataset.zip((images_tf,
-                                    labels_tf)).batch(10,
+                                    labels_tf)).batch(16,
                                                       num_parallel_calls = AUTOTUNE).cache().prefetch(buffer_size = AUTOTUNE)
     return dataset
 
+
+#Function for calculating the Euclidean distance between the two vectors
+def euclidean_distance(vects):
+
+    # unpack the vectors into separate lists
+    x, y = vects
+
+    # compute the sum of squared distances between the vectors
+    sum_square = tf.math.reduce_sum(tf.math.square(x - y),
+                                    axis = -1, keepdims = True)
+    
+    # return the euclidean distance between the vectors
+    return tf.math.sqrt(tf.math.maximum(sum_square,
+                                        tf.keras.backend.epsilon()))
+
+
+
+#Contrastive loss function
+def contrastive_loss(margin = 1):
+
+    #D - predicted distances (feature vectors)
+    #Y - True labels (0 or 1)
+
+    def contrastive__loss(Y, D):
+
+        return tf.math.reduce_mean(
+            Y * tf.math.square(D) + (1 - Y) * tf.math.square(tf.math.maximum(margin - D, 0))
+                                  )
+
+    return contrastive__loss
+
+
+
+#Function for hyperparameter tuning input
+def model_building(hp):
+
+  #Input layer
+  inputs = Input(shape = (224, 224, 3))
+  x = inputs
+
+  #Tuning a number of convolutional blocks
+  for i in range(hp.Int('conv_blocks', min_value = 1, max_value = 5,
+                        default = 3)):
+    
+    #Normalization layer
+    x = BatchNormalization()(x)
+
+    #Tuning the number of convolution's output filters
+    filters = hp.Int(f'filters_{i}', min_value = 32,
+                     max_value = 256, step = 32)
+
+    #Tuning the activation function within convolution
+    activations = hp.Choice(f'activation_{i}',
+                            ['relu','tanh'])
+
+    #Tuning the kernel size within convolution
+    kernel_sizes = hp.Choice(f'kernelsize_{i}',
+                             [j for j in range(1,11)])
+
+    #Convolution layer
+    x = Conv2D(filters, kernel_size= (kernel_sizes,kernel_sizes),
+                 activation = activations)(x)
+
+    #Tuning the pool size within pooling
+    pool_sizes = hp.Choice(f'poolsizes_{i}',
+                           [j for j in range(1,9)])
+
+    #Tuning the strides within pooling
+    strides_pool = hp.Choice(f'strides_pool_{i}',
+                             [j for j in range(1,6)])
+
+    #Tuning the pooling type in the convolutional block
+    if hp.Choice(f'pooling_{i}', ['avg', 'max']) == 'max':
+
+        x = MaxPooling2D(pool_size = (pool_sizes,pool_sizes),
+                         strides = (strides_pool,strides_pool))(x)
+    else:
+      
+        x = AveragePooling2D(pool_size = (pool_sizes,pool_sizes),
+                         strides = (strides_pool,strides_pool))(x)
+
+  #Global Average Pooling / Flatten/ Normalization layers
+  x = GlobalAveragePooling2D()(x)
+  x = Flatten()(x)
+  x = BatchNormalization()(x)
+
+  #Tuning the number of units and activation function in feature vector layer
+  feature_layer = Dense(hp.Int('Dense_units_0', min_value = 10,
+                                max_value = 360, step = 10, default = 50),
+                                activation=  hp.Choice(f'activation_{0}',
+                                         ['relu','tanh']),
+                       name = 'feature_layer')(x)
+
+  #Embedding Convolutional neural network model
+  embedding_network = Model(inputs, feature_layer, name = 'CNN')
+
+  #Setting an input layer for the image pairs
+  input_1 = Input((224, 224, 3), name = 'left_tower')
+  input_2 = Input((224, 224, 3), name = 'right_tower')
+
+  tower_1 = embedding_network(input_1)
+  tower_2 = embedding_network(input_2)
+
+  #Layers for calculation of the Euclidean distance between the two feature vectors
+  merge_layer = Lambda(euclidean_distance,
+                       name = 'lambda_layer')([tower_1,
+                                              tower_2])
+  
+  #Normalization layer
+  normal_layer = tf.keras.layers.BatchNormalization()(merge_layer)
+
+
+  #Final output layer (classification whether the images are of the same label/person)
+  output_layer = Dense(1, activation = "sigmoid",
+                         name = 'output_layer')(normal_layer)
+
+  #Final Siamese neural networks model
+  model = Model(inputs=[input_1, input_2], outputs = output_layer, name = 'SNN')
+
+  #Model compilation with root mean square propagation optimizer (RMSProp), contrastive loss and accuracy
+  model.compile(optimizer = RMSprop(hp.Float('learning_rate',
+                                            min_value = 1e-4, max_value = 0.5,
+                                            sampling = 'log')),
+                
+                  loss = contrastive_loss(hp.Float('margin',
+                                            min_value = 0.1, max_value = 1.5,
+                                            sampling = 'log')))
+
+  return model
 
 
 #Function for plotting the validation and training loss
@@ -532,47 +623,221 @@ def plot_val_train_loss(history_model, export = True):
 
 
 
+#Function for processing of a single part of a images' pair (left or right)
+def tf_single_prep(images):
 
-#Function for calculating an optimal threshold for classification by minimizing the difference between TPR and FNR.
-def opt_threshold(model, tf_dataset, np_labels, plot = True):
-  predictions_prob = model.predict(tf_dataset).flatten().tolist()
-  df_results = pd.DataFrame({'labels': ['Positive' if i[0] == 1 else 'Negative'
-                                        for i in np_labels],
-                             'prob': predictions_prob})
-  threshold = 1/2 * df_results.groupby('labels')['prob'].mean().sum()
-  if plot:
-    plt.figure(figsize = (15, 10))
-    sns.boxplot(data = df_results, y = 'prob', x = 'labels')
-    plt.axhline(y = threshold, color = 'r', linestyle = '--',
-                linewidth = 1, label = 'Threshold')
-    plt.legend()
-    plt.title('Distribution of predicted probabilites per label', size = 13)
-    plt.tight_layout()
-    plt.show()
-  return threshold
+    def _tf_img_pipeline_(pic):
+    
+      def _tf_img_processing_(img_path):
+          img = tf.io.read_file(img_path)
+          img = tf.image.decode_jpeg(img, channels = 3)
+          img = tf.image.resize(img, [224,224], method = 'bilinear')
+          img = tf.image.convert_image_dtype(img, tf.float32) /  tf.constant(255, dtype = tf.float32)
 
+          return img
 
+      return _tf_img_processing_(pic)
 
-#Function for making predictions based on provided threshold.
-def make_predictions(model, tf_dataset, threshold):
-  predictions_prob = model.predict(tf_dataset).flatten().tolist()
-  final_predictions = pd.Series(predictions_prob).apply(lambda x: 1 if x > threshold else 0)
+    images_tf = tf.data.Dataset.from_tensor_slices(images).map(_tf_img_pipeline_)
 
-  return final_predictions
+    dataset = images_tf.batch(16,num_parallel_calls = AUTOTUNE).cache().prefetch(buffer_size = AUTOTUNE)
+
+    return dataset
 
 
 
-#Function for making evaluation based on provided metric, true labels and predicted labels.
-def make_evaluation(true_labels, predictions, metric):
+#Function for calculation of predicted feature vector
+def distance_derivation(imgs_, labels_, CNN_model):
+  tf_ = tf_single_prep(imgs_)
+  feat_vecs_ = CNN_model.predict(tf_)
 
-  metrics_dict = {'accuracy':accuracy_score,
-                  'recall':recall_score,
-                  'precision':precision_score,
-                  'F1':f1_score}
-
-  score = metrics_dict[metric]([i[0] for i in true_labels], predictions)
-
-  return score
+  return feat_vecs_
 
 
 
+#Function for calculation of the optimal threshold for a classification
+def cutoff_derivation(imgs, labels, CNN_model):
+
+  def pos_neg_distances(imgs_, labels_, CNN_model):
+    tf_ = tf_single_prep(imgs_)
+    feat_vecs_ = CNN_model.predict(tf_)
+    pos_feat_vecs_ = feat_vecs_[[i[0] for i in np.argwhere(labels_  == [1])]]
+    neg_feat_vecs_ = feat_vecs_[[i[0] for i in np.argwhere(labels_  == [0])]]
+
+    return (pos_feat_vecs_, neg_feat_vecs_)
+
+  left_pos_feat_vecs, left_neg_feat_vecs = pos_neg_distances(imgs[:,0], labels, CNN_model)
+  right_pos_feat_vecs, right_neg_feat_vecs = pos_neg_distances(imgs[:,1], labels, CNN_model)
+
+  pos_dis_mean = np.mean(euclidean_distance((left_pos_feat_vecs, right_pos_feat_vecs)).numpy().flatten())
+  neg_dis_mean = np.mean(euclidean_distance((left_neg_feat_vecs, right_neg_feat_vecs)).numpy().flatten())
+
+  cutoff = (pos_dis_mean + neg_dis_mean)/2
+
+  return cutoff
+
+
+
+#Function for computing the accuracy and returning the predicted feature vectors (distances)
+def compute_accuracy(y_true, left_feat_vecs, right_feat_vecs, cutoff):
+
+  pred_distances = np.linalg.norm(left_feat_vecs - right_feat_vecs, axis=1)
+  pred_classes = pred_distances.flatten() < cutoff
+
+  return np.mean(pred_classes == y_true), pred_classes, pred_distances
+
+
+
+#Function for ploting single images
+def plot_single_images(photo_names = None, photo_path = None, photos_dict = None):
+
+  fig, axs = plt.subplots(nrows = 1,ncols = 5, figsize = (15, 30))
+
+  if (photo_names != None) & (photo_path != None) & (photos_dict == None):
+
+    for name, ax in zip(photo_names, axs.ravel()):
+        ax.imshow(cv2.cvtColor(cv2.imread(photo_path + name), cv2.COLOR_BGR2RGB))
+        ax.set_title(name)
+        ax.set_axis_off()
+
+  elif (photo_names == None) & (photo_path == None) & (photos_dict != None):
+
+    for photo_item, ax in zip(photos_dict.items(), axs.ravel()):
+      ax.imshow(cv2.cvtColor(photo_item[1], cv2.COLOR_BGR2RGB))
+      ax.set_title(photo_item[0])
+      ax.set_axis_off()
+
+  plt.tight_layout()
+  plt.show()
+
+
+
+#Function for plotting the pairs
+def plot_pairs(photo_names_1, photo_names_2, photo_path_1, photo_path_2, no_rows, no_cols, figure_size):
+
+  fig, axs = plt.subplots(nrows = no_rows, ncols = no_cols, figsize = figure_size)
+  col_ind=0
+  axis_count = 0
+
+  for ax in axs.ravel():
+
+      if axis_count % 2 == 0:
+          ax.imshow(cv2.cvtColor(cv2.imread([f'{photo_path_1}{i}' for i in photo_names_1][col_ind]), cv2.COLOR_BGR2RGB))
+          ax.set_title([f'{photo_path_1}{i}' for i in photo_names_1][col_ind])
+          ax.set_axis_off()
+        
+      else:
+          ax.imshow(cv2.cvtColor(cv2.imread([f'{photo_path_2}{i}' for i in photo_names_2][col_ind]), cv2.COLOR_BGR2RGB))
+          ax.set_title([f'{photo_path_2}{i}' for i in photo_names_2][col_ind])
+          ax.set_axis_off()
+
+          col_ind += 1
+        
+      axis_count +=1
+    
+
+  plt.tight_layout()
+  plt.show()
+
+
+
+#Function for detection of face with subsequent cropping based on detected bouding boxes
+def cropping_engine(path, photo_name_list):
+
+    def bbox_engine_img_input(path, img_name, m1_scale_factor = 1.1, m1_min_neighbors = 13):
+    
+        img = cv2.imread(path + img_name)
+        face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(image = img, scaleFactor = m1_scale_factor, minNeighbors = m1_min_neighbors)
+
+        while len(faces) < 1:
+            m1_min_neighbors -= 1
+            faces = face_cascade.detectMultiScale(image = img, scaleFactor = m1_scale_factor, minNeighbors = m1_min_neighbors)
+            if m1_min_neighbors < 0:
+                break
+    
+        if len(faces) > 0:
+
+            bbox = {"x_1" : faces[0][0],
+                    "y_1" : faces[0][1],
+                    "width" : faces[0][2],
+                    "height" : faces[0][3],
+                    'x_end' : faces[0][0] + faces[0][2],
+                    'y_end' : faces[0][1] + faces[0][3]}
+
+            return bbox
+
+    photos_dict = {}
+
+    bbox_generated = pd.DataFrame(columns= ['image_id', 'x_1', 'y_1', 'width', 'height', 'x_end', 'y_end'])
+
+    for photo_name in photo_name_list:
+
+        bbox_coordinates = bbox_engine_img_input(path, photo_name)
+        bbox_coordinates['image_id'] = photo_name
+
+        bbox_generated = bbox_generated.append(bbox_coordinates, ignore_index = True)
+
+        startX = bbox_generated[bbox_generated['image_id'] == photo_name]['x_1'].values[0]
+        startY = bbox_generated[bbox_generated['image_id'] == photo_name]['y_1'].values[0]
+        endX = bbox_generated[bbox_generated['image_id'] == photo_name]['x_end'].values[0]
+        endY = bbox_generated[bbox_generated['image_id'] == photo_name]['y_end'].values[0]
+
+        img =  cv2.imread(path+ photo_name)
+        crop_img = cv2.resize(img[startY:endY, startX:endX], (224, 224))
+
+        photos_dict[photo_name] = crop_img
+
+    return photos_dict
+
+
+
+#Function for predicting a person class based on a minimum of Euclidean distances between the on-site image(s) and reference images
+def live_demo_preds(ref_feat_vecs, onsite_feat_vecs):
+
+  euclidean_distance_dict = {}
+  predicted_pairs_dict = {}
+
+  #For each on-site image, calculate the Euclidan distance with each reference image.
+  for ons in onsite_feat_vecs.columns:
+
+    euc_dis_ons = {}
+
+    for ref in ref_feat_vecs.columns:
+      euc_dis = euclidean_distance((onsite_feat_vecs[ons].values,
+                                    ref_feat_vecs[ref].values)).numpy().flatten()
+      euc_dis_ons[ref] = euc_dis[0]
+
+    euclidean_distance_dict[ons] = euc_dis_ons
+
+  #For each on-site image, select the reference image name which has the smallest Euclidean distance.
+  for ons in euclidean_distance_dict.keys():
+
+    pred_person = min(euclidean_distance_dict[ons],
+                     key = euclidean_distance_dict[ons].get)
+
+    predicted_pairs_dict[ons] = pred_person
+
+  return predicted_pairs_dict, euclidean_distance_dict
+
+
+
+#Function for plotting the predicted pairs
+def plot_predicted_pairs(predict_pairs):
+
+  fig, axs = plt.subplots(5, 1, figsize=(25, 15))
+
+  for ax, pair in zip(axs.ravel(), predict_pairs.items()):
+    
+    ax.imshow(tf.concat([cv2.cvtColor(cv2.imread(f'./cropped_live_demo/{pair[0]}'), 
+                                      cv2.COLOR_BGR2RGB),
+                         cv2.cvtColor(cv2.imread(f'./cropped_live_demo/{pair[1]}'),
+                                      cv2.COLOR_BGR2RGB)
+                        ],axis = 1))
+  
+    ax.set_title(f'On-site person: {pair[0].split("_")[0]} \n Predicted (reference) person: {pair[1].split("_")[0]}',
+               size = 14)
+    ax.set_axis_off()
+  
+  plt.tight_layout()
+  plt.show()
