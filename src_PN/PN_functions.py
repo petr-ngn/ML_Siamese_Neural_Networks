@@ -713,7 +713,7 @@ def plot_single_images(photo_names = None, photo_path = None, photos_dict = None
 
 
 #Function for plotting the pairs
-def plot_pairs(photo_names_1, photo_names_2, photo_path_1, photo_path_2, no_rows, no_cols, figure_size):
+def plot_pairs_live_demo(photo_names_1, photo_names_2, photo_path_1, photo_path_2, no_rows, no_cols, figure_size):
 
   fig, axs = plt.subplots(nrows = no_rows, ncols = no_cols, figsize = figure_size)
   col_ind=0
