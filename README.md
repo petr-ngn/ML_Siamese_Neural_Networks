@@ -8,7 +8,7 @@ Within the course __*Agile Project of Machine Learning Applications (4IZ481)*__ 
 
 This course was surpervised by the Data Scientists, AI & ML Engineers and Scrum Masters at [**CN Group CZ**](https://www.linkedin.com/company/cngroup-dk), namely by [Petr Polak](https://www.linkedin.com/in/87petrpolak), [Patrik Tison](https://www.linkedin.com/in/patriktison), Viktor Stepanuk, Marek Hronek and [Tomas Kliment](https://www.linkedin.com/in/tomáš-kliment-b74120196).
 
-Particularly, I have developed a Siamese Convolutional Neural Networks with Contrastive Loss, which was further tuned with Bayesian Optimization while minimizing a loss function on validation set, and was built on the generated balanced pairs of images from the cleaned and processed [CelebA dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html). Such model had an accuracy over 70% on the test set.
+Particularly, we have developed custom Siamese Convolutional Neural Networks with Contrastive Loss, which was further tuned with Bayesian Optimization while minimizing a loss function on validation set, and was built on the generated balanced pairs of images from the cleaned and processed [CelebA dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html). Such model had an accuracy over 70% on the test set.
 
 
 
